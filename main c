@@ -1,5 +1,5 @@
 /* 100% original code by Yeo Guo Hong and Simon Wong
- * Copyrighted 2018 DO NOT STEAL lol*/
+ * Copyrighted 2018 DO NOT STEAL */
 
 /* LIGHT_THRESHOLD*: 3000 lux
  * TEMP_THRESHOLD*: 28oC
@@ -11,9 +11,11 @@
 
 /* To do list:
  *
- * 1. Find out how to make the red LED stop lighting up.
+ * 1. Find out how to make the red LED stop lighting up
  * 2. Check if there is a way to make both OLED and green LED separate (currently tied by P2.1)
  * 3. Figure out how to use EINT3 interrupt
+ * 4. Double check the conversion from acc_read values to g-values
+ * 5. Find out the argment in temp_init() to initialize it
  *
  */
 
@@ -145,7 +147,7 @@ void COUNTDOWN(void) {
 			oled_toggle3[] = "ENTERING",
 			oled_toggle4[] = "CLIMB MODE";
 
-//	oled_clearScreen(OLED_COLOR_BLACK);
+	oled_clearScreen(OLED_COLOR_BLACK);
 
 	oled_putString(5, 5, &oled_toggle1, OLED_COLOR_WHITE, OLED_COLOR_BLACK);
 	oled_putString(5, 15, &oled_toggle2, OLED_COLOR_WHITE, OLED_COLOR_BLACK);
@@ -180,39 +182,72 @@ void COUNTDOWN(void) {
 	led7seg_setChar(' ', FALSE);
 	rgb_setLeds(0);
 
+	oled_clearScreen(OLED_COLOR_BLACK);
+
 }
 
-//float BODY_TEMP_MONITOR(void) {
-//
-//
-//
-//}
-//
-//float AMBIENT_LIGHT_DETECTION(void) {
-//
-//
-//
-//}
+void EMERGENCY_MODE(void) {
+
+	uint8_t oled_emergency_duration[] = "",
+			oled_emergency1[] = "EMERGENCY mode",
+			oled_emergency2[] = "Duration: 0s",
+			oled_emergency3[] = "Duration: 1s",
+			oled_emergency4[] = "Duration: 2s",
+			oled_emergency5[] = "Duration: 3s",
+			oled_emergency6[] = "Duration: 4s",
+			oled_emergency7[] = "Duration: 5s";
+	uint32_t counter = 0;
+
+	oled_putString(5, 5, &oled_emergency1, OLED_COLOR_WHITE, OLED_COLOR_BLACK);
+
+	while (1) {
+
+		sprintf(oled_emergency_duration, "Duration: %us", counter);
+		oled_putString(5, 45, &oled_emergency_duration, OLED_COLOR_WHITE, OLED_COLOR_BLACK);
+		counter++;
+
+		rgb_setLeds(2);
+		systick_delay(500);
+		rgb_setLeds(1);
+		systick_delay(500);
+
+	}
+
+//		oled_putString(5, 45, &oled_emergency2, OLED_COLOR_WHITE, OLED_COLOR_BLACK);
+//		systick_delay(1000);
+//		oled_putString(5, 45, &oled_emergency3, OLED_COLOR_WHITE, OLED_COLOR_BLACK);
+//		systick_delay(1000);
+//		oled_putString(5, 45, &oled_emergency4, OLED_COLOR_WHITE, OLED_COLOR_BLACK);
+//		systick_delay(1000);
+//		oled_putString(5, 45, &oled_emergency5, OLED_COLOR_WHITE, OLED_COLOR_BLACK);
+//		systick_delay(1000);
+//		oled_putString(5, 45, &oled_emergency6, OLED_COLOR_WHITE, OLED_COLOR_BLACK);
+//		systick_delay(1000);
+//		oled_putString(5, 45, &oled_emergency7, OLED_COLOR_WHITE, OLED_COLOR_BLACK);
+
+}
 
 int main(void) {
 
 	uint8_t sw3 = 1, sw3_counter = 0;
 //	uint8_t sw4 = 1;
 
-//	uint8_t acc_x = 0, acc_y = 0, acc_z = 0;
-//	uint8_t acc_x_init = 0, acc_y_init = 0, acc_z_init = 0;
+	uint8_t acc_x = 0, acc_y = 0, acc_z = 0;
+	uint8_t acc_x_init = 0, acc_y_init = 0, acc_z_init = 0;
+	float acc_net_sq = 0, g_value = 0;
 
 	uint32_t light_value = 0;
-
-//	uint16_t led_value = 0;
 
 	uint8_t oled_init1[] = "Initialisation",
 			oled_init2[] = "mode. Press",
 			oled_init3[] = "TOGGLE to",
 			oled_init4[] = "climb",
-			oled_climb[] = "CLIMB";
+			oled_climb[] = "CLIMB",
+			oled_acc[] = "",
+			oled_light[] = "";
+//			oled_temp[] = "";
 
-//	int32_t temp_value = 0;
+//	float temp_value = 0.0;
 
 
 
@@ -223,22 +258,20 @@ int main(void) {
 	LPC_GPIOINT->IO2IntEnF |= 1<<10;						// Enable GPIO Interrupt P2.10
 	NVIC_EnableIRQ(EINT3_IRQn);								// Enable EINT3 interrupt
 
-//	acc_init();												// Initializing external peripherals
+	acc_init();												// Initializing external peripherals
 	led7seg_init();
 	led7seg_setChar(' ', FALSE);
 	light_enable();
+	light_setRange(LIGHT_RANGE_16000);
 	oled_init();
 	oled_clearScreen(OLED_COLOR_BLACK);
 	rgb_init();
 //	temp_init(&msTicks);
 
-	light_setRange(LIGHT_RANGE_16000);
 	oled_putString(5, 5, &oled_init1, OLED_COLOR_WHITE, OLED_COLOR_BLACK);
 	oled_putString(5, 15, &oled_init2, OLED_COLOR_WHITE, OLED_COLOR_BLACK);
 	oled_putString(5, 25, &oled_init3, OLED_COLOR_WHITE, OLED_COLOR_BLACK);
 	oled_putString(5, 35, &oled_init4, OLED_COLOR_WHITE, OLED_COLOR_BLACK);
-
-//	acc_read(&acc_x_init, &acc_y_init, &acc_z_init);
 
 
 
@@ -263,21 +296,28 @@ int main(void) {
 
 		if (sw3_counter == 1) {								// When sw3 (MODE_TOGGLE) is pressed, device transitions to CLIMB mode
 
-			oled_clearScreen(OLED_COLOR_BLACK);
-
 			COUNTDOWN();
-			sw3_counter++;
 
-			oled_clearScreen(OLED_COLOR_BLACK);
+			oled_putString(5, 5, &oled_climb, OLED_COLOR_WHITE, OLED_COLOR_BLACK);
+			acc_read(&acc_x_init, &acc_y_init, &acc_z_init);
+			sw3_counter++;
 
 		}
 
 		if (sw3_counter > 1) {								// After transition, device is in CLIMB mode
 
-			oled_putString(5, 5, &oled_climb, OLED_COLOR_WHITE, OLED_COLOR_BLACK);
-
+			acc_read(&acc_x, &acc_y, &acc_z);
+			acc_net_sq = pow(acc_x - acc_x_init, 2) + pow(acc_y - acc_y_init, 2) + pow(acc_z - acc_z_init, 2);
+			g_value = sqrt(acc_net_sq) / 64;
 			light_value = light_read();
-			printf("Light: %u lux \n", light_value);
+//			temp_value = temp_read();
+
+			sprintf(oled_acc, "Acc: %.2f g", g_value);
+			oled_putString(5, 25, &oled_acc, OLED_COLOR_WHITE, OLED_COLOR_BLACK);
+			sprintf(oled_light, "Light: %u lux", light_value);
+			oled_putString(5, 35, &oled_light, OLED_COLOR_WHITE, OLED_COLOR_BLACK);
+//			sprintf(oled_temp, "Temp: %.1f deg", temp_value/10);
+//			oled_putString(5, 45, &oled_temp, OLED_COLOR_WHITE, OLED_COLOR_BLACK);
 
 			if (light_value <= 17) {pca9532_setLeds(0xFFFF, 0xFFFF);}				// Super messy code, will fix later
 			else if (light_value <= 23) {pca9532_setLeds(0x7FFF, 0xFFFF);}			// The reason why I put these particular light_values is that light works in a logarithmic scale
@@ -297,16 +337,14 @@ int main(void) {
 			else if (light_value <= 3000) {pca9532_setLeds(0x0001, 0xFFFF);}
 			else {pca9532_setLeds(0x0000, 0xFFFF);}
 
-			systick_delay(500);
-//			printf("%.1f \n", temp_read());
+
+//			if (g_value >= 0.1) {
+//				EMERGENCY_MODE();
+//			}
+
+			systick_delay(100);
 
 		}
-
-//		acc_read(&acc_x, &acc_y, &acc_z);
-//
-//		uint8_t acc_net = sqrt(pow(acc_x - acc_x_init, 2) + pow(acc_y - acc_y_init, 2) + pow(acc_z - acc_z_init, 2));
-//
-//		printf("%d \n", acc_net);
 	}
 }
 
