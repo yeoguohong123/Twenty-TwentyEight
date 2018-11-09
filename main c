@@ -37,6 +37,7 @@
 #include "lpc17xx_timer.h"
 
 #include "acc.h"
+#include "joystick.h"
 #include "led7seg.h"
 #include "light.h"
 #include "oled.h"
@@ -51,55 +52,65 @@
 
 
 volatile uint32_t msTicks; 									// Counter for 1ms SysTicks
-uint32_t currentTicks = 0, tempTicks = 0;
+volatile uint32_t lightTicks;
+volatile uint32_t tempTicks;
 
-uint8_t MODE_TOGGLE = 1, MODE_TOGGLE_counter = 0, MODE_TOGGLE_counter2 = 0;
+uint32_t currentTicks = 0;
+
+uint8_t MODE_TOGGLE = 1;
+uint32_t MODE_TOGGLE_counter = 0, MODE_TOGGLE_counter2 = 0;
 uint8_t EMERGENCY_OVER = 1;
 
 int8_t acc_x = 0, acc_y = 0, acc_z = 0;
 int8_t acc_x_init = 0, acc_y_init = 0, acc_z_init = 0;
 float acc_net_sq = 0.0, g_value = 0.0;
 float ACC_THRESHOLD = 0.1;
+uint32_t acc_threshold_counter = 0;
 
-char oled_init1[] = "Initialisation",
-	oled_init2[] = "mode. Press",
-	oled_init3[] = "TOGGLE to climb",
+char oled_init1[15] = "Initialisation",
+	oled_init2[15] = "mode. Press",
+	oled_init3[15] = "TOGGLE to climb",
 
-	oled_toggle1[] = "INITIALISATION",
-	oled_toggle2[] = "COMPLETE.",
-	oled_toggle3[] = "ENTERING CLIMB",
-	oled_toggle4[] = "MODE",
+	oled_toggle1[15] = "INITIALISATION",
+	oled_toggle2[15] = "COMPLETE.",
+	oled_toggle3[15] = "ENTERING CLIMB",
+	oled_toggle4[15] = "MODE",
 
-	oled_climb[] = "CLIMB",
-	oled_acc[] = "",
-	oled_light[] = "",
-	oled_dim[] = "DIM",
-	oled_temp[] = "",
-	oled_restnow[] = "REST NOW",
+	oled_climb[15] = "CLIMB",
+	oled_acc[15] = "",
+	oled_light[15] = "",
+	oled_dim[15] = "DIM",
+	oled_temp[15] = "",
+	oled_restnow[15] = "REST NOW",
 
-	oled_emergency[] = "EMERGENCY Mode!",
-	oled_emergency_acc[] = "",
-	oled_emergency_duration[] = "",
-	oled_emergency_temp[] = "",
+	oled_emergency[15] = "EMERGENCY Mode!",
+	oled_emergency_acc[15] = "",
+	oled_emergency_duration[15] = "",
+	oled_emergency_temp[15] = "",
 
-	oled_emergency_saved1[] = "Emergency",
-	oled_emergency_saved2[] = "clear!",
+	oled_emergency_saved1[15] = "Emergency",
+	oled_emergency_saved2[15] = "clear!",
 
-	oled_blank[] = "              ";
+	oled_blank[15] = "               ",
+	oled_blank_half[15] = "       ";
 
 uint32_t light_value = 0;
 uint32_t LIGHT_THRESHOLD = 3000;
 
 int32_t temp_value = 0;
 float temp_value_c = 0.0;
-int temp_threshold_counter = 0;
+uint32_t temp_threshold_counter = 0;
 float TEMP_THRESHOLD = 28.0;
 
-float elapsed_ms = 0.0, elapsed = 0.0;
+float elapsed_ms = 0.0;
+
+uint32_t BLINK_BLUE_toggle = 0, ALTERNATE_LED_toggle = 0;
 
 
-
+void ALTERNATE_LED(void);
+void BLINK_BLUE(void);
 uint32_t GETMSTICKS(void);
+void REST_NOW(void);
 void RGB_INIT(void);
 void RGB_SETLED(uint8_t LedMask);
 
@@ -193,6 +204,10 @@ void EINT3_IRQHandler(void) {
 void SysTick_Handler(void) {					// Just increment SysTick counter
 
 	msTicks++;
+	BLINK_BLUE();
+	ALTERNATE_LED();
+//	MODE_TOGGLE = (GPIO_ReadValue(2) >> 10) & 0x1;
+//	EMERGENCY_OVER = (GPIO_ReadValue(1) >> 31) & 0x1;
 
 }
 
@@ -206,6 +221,38 @@ __INLINE static void systick_delay (uint32_t delayTicks) {	// Creates a delay of
 }
 
 
+
+void ALTERNATE_LED(void) {
+
+	if (ALTERNATE_LED_toggle == 1) {
+
+		lightTicks++;
+
+		if (lightTicks % 1000 < 500) {
+			RGB_SETLED(2);
+		}
+
+		else {
+			RGB_SETLED(1);
+		}
+	}
+}
+
+void BLINK_BLUE(void) {
+
+	if (BLINK_BLUE_toggle == 1) {
+
+		lightTicks++;
+
+		if (lightTicks % 2000 < 1000) {
+			RGB_SETLED(2);
+		}
+
+		else {
+			RGB_SETLED(0);
+		}
+	}
+}
 
 uint32_t GETMSTICKS(void) {
 
@@ -223,27 +270,19 @@ void RGB_INIT(void) {
 void RGB_SETLED(uint8_t LedMask) {
 
 	if ((LedMask & RGB_RED) != 0) {
-
 		GPIO_SetValue(2, (1<<0));
-
 	}
 
 	else {
-
 		GPIO_ClearValue(2, (1<<0));
-
     }
 
 	if ((LedMask & RGB_BLUE) != 0) {
-
 		GPIO_SetValue(0, (1<<26));
-
     }
 
 	else {
-
 		GPIO_ClearValue(0, (1<<26));
-
     }
 
 }
@@ -260,12 +299,13 @@ int main(void) {
 	init_GPIO();
 	init_ssp();
 
-	LPC_GPIOINT->IO2IntEnF |= 1<<10;						// Enable GPIO Interrupt P2.10
-	NVIC_EnableIRQ(EINT3_IRQn);								// Enable EINT3 interrupt
 
 	if (SysTick_Config(SystemCoreClock / 1000)) {
-		while (1);  										// Capture error
+//		while (1);  										// Capture error
 	}
+
+	LPC_GPIOINT->IO2IntEnF |= 1<<10;						// Enable GPIO Interrupt P2.10
+	NVIC_EnableIRQ(EINT3_IRQn);								// Enable EINT3 interrupt
 
 	acc_init();												// Initializing external peripherals + clearing them
 	led7seg_init();
@@ -300,7 +340,6 @@ int main(void) {
 
 //			***** COUNTDOWN function START *****
 
-			currentTicks = msTicks;
 			oled_clearScreen(OLED_COLOR_BLACK);
 
 			oled_putString(0, 0, (uint8_t*) oled_toggle1, OLED_COLOR_WHITE, OLED_COLOR_BLACK);
@@ -308,38 +347,19 @@ int main(void) {
 			oled_putString(0, 20, (uint8_t*) oled_toggle3, OLED_COLOR_WHITE, OLED_COLOR_BLACK);
 			oled_putString(0, 30, (uint8_t*) oled_toggle4, OLED_COLOR_WHITE, OLED_COLOR_BLACK);
 
+			lightTicks = 0;
+
 			for (i = 9; i >= 0; i--) {			// 7-segment decrements from 9 to 0
 
 				seven_seg = i + '0';
 				led7seg_setChar(seven_seg, FALSE);
 
-
-
-//				***** BLINK_BLUE function START *****
-
-				if ((msTicks - currentTicks) % 2000 <= 1000) {
-
-					RGB_SETLED(2);
-
-				}
-
-				else {
-
-					RGB_SETLED(0);
-
-				}
-
-//				***** BLINK_BLUE function END *****
-
-
-
-				tempTicks = msTicks;
-				while ((msTicks - tempTicks) <= 500);				// Todo: optimise
-
+				BLINK_BLUE_toggle = 1;
+				systick_delay(500);				// Todo: optimise
 			}
 
+			BLINK_BLUE_toggle = 0;
 			led7seg_setChar(' ', FALSE);
-			RGB_SETLED(0);
 			oled_clearScreen(OLED_COLOR_BLACK);
 
 //			***** COUNTDOWN function END *****
@@ -355,6 +375,10 @@ int main(void) {
 
 		if ((MODE_TOGGLE_counter > 1) && (MODE_TOGGLE_counter2 > 0)) {			// After transition, device is in CLIMB mode
 																				// Prevents going to CLIMB mode prematurely if you spam sw3 during COUNTDOWN
+
+//			sprintf(oled_climb, "CLIMB");
+			oled_putString(0, 0, (uint8_t*) oled_climb, OLED_COLOR_WHITE, OLED_COLOR_BLACK);
+
 			acc_read(&acc_x, &acc_y, &acc_z);
 			acc_net_sq = pow(acc_x - acc_x_init, 2) + pow(acc_y - acc_y_init, 2) + pow(acc_z - acc_z_init, 2);
 			g_value = sqrt(acc_net_sq) / 64;
@@ -362,14 +386,13 @@ int main(void) {
 			temp_value = temp_read();
 			temp_value_c = temp_value;
 
-			sprintf(oled_climb, "CLIMB");
-			oled_putString(0, 0, (uint8_t*) oled_climb, OLED_COLOR_WHITE, OLED_COLOR_BLACK);
 			sprintf(oled_acc, "Acc: %4.2f g", g_value);
-			oled_putString(0, 10, (uint8_t*) oled_acc, OLED_COLOR_WHITE, OLED_COLOR_BLACK);
-			sprintf(oled_light, "Light: %5lu lx", light_value);
-			oled_putString(0, 20, (uint8_t*) oled_light, OLED_COLOR_WHITE, OLED_COLOR_BLACK);
+			oled_putString(0, 20, (uint8_t*) oled_acc, OLED_COLOR_WHITE, OLED_COLOR_BLACK);
 			sprintf(oled_temp, "Temp: %4.1f deg", temp_value_c/10);
 			oled_putString(0, 30, (uint8_t*) oled_temp, OLED_COLOR_WHITE, OLED_COLOR_BLACK);
+			sprintf(oled_light, "Light: %5lu lx", light_value);
+			oled_putString(0, 40, (uint8_t*) oled_light, OLED_COLOR_WHITE, OLED_COLOR_BLACK);
+
 
 
 
@@ -387,197 +410,163 @@ int main(void) {
 
 			pca9532_setLeds((0b1111111111111111 >> counter), 0xFFFF);
 
-			// ***** AMBIENT_LIGHT_DETECTION function END *****
+			if (light_value < LIGHT_THRESHOLD) {
+
+				sprintf(oled_dim, "DIM");
+				oled_putString(50, 0, (uint8_t*) oled_dim, OLED_COLOR_WHITE, OLED_COLOR_BLACK);
+
+			}
+
+			else {
+
+				oled_putString(50, 0, (uint8_t*) oled_blank_half, OLED_COLOR_WHITE, OLED_COLOR_BLACK);
+
+			}
+
+//			***** AMBIENT_LIGHT_DETECTION function END *****
+
+
+
 
 
 
 //			***** REST_NOW function START *****
 
-			if (light_value < LIGHT_THRESHOLD) {
-
-				sprintf(oled_dim, "DIM");
-				oled_putString(0, 40, (uint8_t*) oled_dim, OLED_COLOR_WHITE, OLED_COLOR_BLACK);
-
-			}
-
-			else {
-
-				oled_putString(0, 40, (uint8_t*) oled_blank, OLED_COLOR_WHITE, OLED_COLOR_BLACK);
-
-			}
-
 			if (temp_value_c/10 > TEMP_THRESHOLD) {
+
 
 				if (temp_threshold_counter == 0) {			// Prevents REST_NOW from activating every time TEMP_THRESHOLD is crossed
 
-					oled_putString(0, 50, (uint8_t*) oled_restnow, OLED_COLOR_WHITE, OLED_COLOR_BLACK);
-					systick_delay(3000);
+					pca9532_setLeds(0x0000, 0xFFFF);
+					oled_clearScreen(OLED_COLOR_BLACK);
+					oled_putString(0, 0, (uint8_t*) oled_restnow, OLED_COLOR_WHITE, OLED_COLOR_BLACK);
+					systick_delay(3000);					// Todo: Optimise
+					oled_clearScreen(OLED_COLOR_BLACK);
 					temp_threshold_counter++;
 
 				}
 
-				else {
-
-					oled_putString(0, 50, (uint8_t*) oled_blank, OLED_COLOR_WHITE, OLED_COLOR_BLACK);
-
-				}
-
 			}
 
 			else {
 
-				oled_putString(0, 50, (uint8_t*) oled_blank, OLED_COLOR_WHITE, OLED_COLOR_BLACK);
 				temp_threshold_counter = 0;
 
 			}
-
-
 
 //			***** REST_NOW function END *****
 
 
 
-			if (g_value >= ACC_THRESHOLD) {
 
 
 
-//				***** EMERGENCY_MODE function START *****
+//			***** EMERGENCY_MODE function START *****
+
+			if (g_value > ACC_THRESHOLD) {
+
+
+				oled_putString(0, 0, (uint8_t*) oled_blank, OLED_COLOR_WHITE, OLED_COLOR_BLACK);
+				oled_putString(0, 40, (uint8_t*) oled_blank, OLED_COLOR_WHITE, OLED_COLOR_BLACK);
+				oled_putString(0, 0, (uint8_t*) oled_emergency, OLED_COLOR_WHITE, OLED_COLOR_BLACK);
+
+				pca9532_setLeds(0x0000, 0xFFFF);
 
 				currentTicks = msTicks;
 
-				oled_clearScreen(OLED_COLOR_BLACK);
-				oled_putString(0, 0, (uint8_t*) oled_emergency, OLED_COLOR_WHITE, OLED_COLOR_BLACK);
-				pca9532_setLeds(0x0000, 0xFFFF);
-
-				while (MODE_TOGGLE || EMERGENCY_OVER) {
+				while(1) {
 
 					MODE_TOGGLE = (GPIO_ReadValue(2) >> 10) & 0x1;
 					EMERGENCY_OVER = (GPIO_ReadValue(1) >> 31) & 0x1;
+					ALTERNATE_LED_toggle = 1;
 
 					acc_read(&acc_x, &acc_y, &acc_z);
 					acc_net_sq = pow(acc_x - acc_x_init, 2) + pow(acc_y - acc_y_init, 2) + pow(acc_z - acc_z_init, 2);
 					g_value = sqrt(acc_net_sq) / 64;
-					light_value = light_read();
 					temp_value = temp_read();
 					temp_value_c = temp_value;
 					elapsed_ms = msTicks - currentTicks;
-					elapsed = elapsed_ms / 1000;
 
 					sprintf(oled_emergency_acc, "Acc: %4.2f g", g_value);
 					oled_putString(0, 20, (uint8_t*) oled_emergency_acc, OLED_COLOR_WHITE, OLED_COLOR_BLACK);
 					sprintf(oled_emergency_temp, "Temp: %4.1f deg", temp_value_c/10);
 					oled_putString(0, 30, (uint8_t*) oled_emergency_temp, OLED_COLOR_WHITE, OLED_COLOR_BLACK);
-					sprintf(oled_emergency_duration, "Time: %5.1f s", elapsed);
+					sprintf(oled_emergency_duration, "Time: %5.1f s", elapsed_ms/1000);
 					oled_putString(0, 50, (uint8_t*) oled_emergency_duration, OLED_COLOR_WHITE, OLED_COLOR_BLACK);
 
 
 
-//					***** ALTERNATE_LED function START *****
+//					***** SAVED function + BLINK_BLUE function START *****
 
-					tempTicks = msTicks;
+					if ((MODE_TOGGLE == 0) && (EMERGENCY_OVER == 0)) {
 
-					if ((tempTicks - currentTicks) % 1000 <= 500) {
-
-						RGB_SETLED(2);
-
-					}
-
-					else {
-
-						RGB_SETLED(1);
-
-					}
-
-//					***** ALTERNATE_LED function END *****
-
-
-
-
-					if ((MODE_TOGGLE && EMERGENCY_OVER) == 0) {
-
-
-
-//						***** SAVED function + BLINK_BLUE function START *****
+						ALTERNATE_LED_toggle = 0;
 
 						oled_clearScreen(OLED_COLOR_BLACK);
 						oled_putString(0, 0, (uint8_t*) oled_emergency_saved1, OLED_COLOR_WHITE, OLED_COLOR_BLACK);
 						oled_putString(0, 10, (uint8_t*) oled_emergency_saved2, OLED_COLOR_WHITE, OLED_COLOR_BLACK);
 
+						currentTicks = msTicks;
+						lightTicks = 0;
+
 						for (i = 4; i >= 0; i--) {
+
+							BLINK_BLUE_toggle = 1;
 
 							switch(i) {
 
 								case(4): {
-
 									led7seg_setChar('S', FALSE);
-									RGB_SETLED(2);
 									break;
-
 								}
 
 								case(3): {
-
 									led7seg_setChar('A', FALSE);
 									break;
-
 								}
 
 								case(2): {
-
 									led7seg_setChar('U', FALSE);
-									RGB_SETLED(0);
 									break;
-
 								}
 
 								case(1): {
-
 									led7seg_setChar('E', FALSE);
 									break;
-
 								}
 
 								case(0): {
-
 									led7seg_setChar('D', FALSE);
-									RGB_SETLED(2);
 									break;
-
 								}
 
 								default: {
-
-									RGB_SETLED(0);
+									led7seg_setChar(' ', FALSE);
 									break;
-
 								}
 							}
 
-							tempTicks = msTicks;
-							while ((msTicks - tempTicks) <= 500);				// Todo: optimise
+							systick_delay(500);			//Todo: optimise
 
 						}
 
 						led7seg_setChar(' ', FALSE);
 						oled_clearScreen(OLED_COLOR_BLACK);
+						BLINK_BLUE_toggle = 0;
 						RGB_SETLED(0);
-						oled_putString(0, 0, (uint8_t*) oled_climb, OLED_COLOR_WHITE, OLED_COLOR_BLACK);
+						break;
 
 					}
 
 //					***** SAVED function + BLINK_BLUE function END *****
 
-
-
 				}
+			}
 
 //			***** EMERGENCY_MODE function END *****
 
 
 
-			}
 		}
 	}
 }
-
-
