@@ -110,7 +110,7 @@ char oled_init1[15] = "Initialisation",
 	oled_blank[15] = "               ",
 	oled_blank_half[15] = "       ";
 
-uint8_t rotaryState = 0, rotary_check_left = 0, rotary_check_right = 0, rotary_value = 0;
+uint8_t rotaryState = 0, rotary_value = 0;
 
 int32_t temp_value = 0;
 float temp_value_c = 0.0;
@@ -443,37 +443,32 @@ int main(void) {
 
 					if ((joyState & JOYSTICK_LEFT) != 0) {
 
-						if (LIGHT_THRESHOLD > 500) {
-							LIGHT_THRESHOLD -= 500;
+						if (LIGHT_THRESHOLD > 100) {
+							LIGHT_THRESHOLD -= 100;
 						}
 					}
 
 					if ((joyState & JOYSTICK_RIGHT) != 0) {
 
-						if (LIGHT_THRESHOLD < 16000) {
-							LIGHT_THRESHOLD += 500;
+						if (LIGHT_THRESHOLD < 15900) {
+							LIGHT_THRESHOLD += 100;
 						}
 					}
 
 					if (rotary_value == ROTARY_LEFT) {
 
-						if (rotary_check_left == 0) {
-
-							if (TEMP_THRESHOLD > 20) {
-								TEMP_THRESHOLD -= 0.5;
-								rotary_check_left = 1;
-							}
+						if (TEMP_THRESHOLD > 20) {
+							TEMP_THRESHOLD -= 0.5;
+							rotary_value = 0;
 						}
+
 					}
 
 					if (rotary_value == ROTARY_RIGHT) {
 
-						if (rotary_check_right == 0) {
-
-							if (TEMP_THRESHOLD < 40) {
-								TEMP_THRESHOLD += 0.5;
-								rotary_check_right = 1;
-							}
+						if (TEMP_THRESHOLD < 40) {
+							TEMP_THRESHOLD += 0.5;
+							rotary_value = 0;
 						}
 					}
 
