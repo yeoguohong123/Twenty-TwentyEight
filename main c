@@ -43,6 +43,7 @@
 #include "oled.h"
 #include "pca9532.h"
 #include "rgb.h"
+#include "rotary.h"
 #include "temp.h"
 
 #include <stdio.h>
@@ -56,10 +57,12 @@ volatile uint32_t lightTicks;
 volatile uint32_t tempTicks;
 
 uint32_t currentTicks = 0;
+float elapsed_ms = 0.0;
 
-uint8_t MODE_TOGGLE = 1;
+uint8_t MODE_TOGGLE = 1, EMERGENCY_OVER = 1;
 uint32_t MODE_TOGGLE_counter = 0, MODE_TOGGLE_counter2 = 0;
-uint8_t EMERGENCY_OVER = 1;
+
+uint8_t BLINK_BLUE_toggle = 0, ALTERNATE_LED_toggle = 0;
 
 int8_t acc_x = 0, acc_y = 0, acc_z = 0;
 int8_t acc_x_init = 0, acc_y_init = 0, acc_z_init = 0;
@@ -67,9 +70,22 @@ float acc_net_sq = 0.0, g_value = 0.0;
 float ACC_THRESHOLD = 0.1;
 uint32_t acc_threshold_counter = 0;
 
+uint8_t init_toggle = 1;
+
+uint8_t joyState = 0, joystick_toggle = 0;
+uint32_t joystick_counter = 0, joystick_counter2 = 0;
+
+uint32_t light_value = 0;
+uint32_t LIGHT_THRESHOLD = 3000;
+
 char oled_init1[15] = "Initialisation",
 	oled_init2[15] = "mode. Press",
 	oled_init3[15] = "TOGGLE to climb",
+
+	oled_threshold[15] = "SET THRESHOLD:",
+	oled_threshold_acc[15] = "",
+	oled_threshold_light[15] = "",
+	oled_threshold_temp[15] = "",
 
 	oled_toggle1[15] = "INITIALISATION",
 	oled_toggle2[15] = "COMPLETE.",
@@ -94,25 +110,20 @@ char oled_init1[15] = "Initialisation",
 	oled_blank[15] = "               ",
 	oled_blank_half[15] = "       ";
 
-uint32_t light_value = 0;
-uint32_t LIGHT_THRESHOLD = 3000;
+uint8_t rotaryState = 0, rotary_check_left = 0, rotary_check_right = 0, rotary_value = 0;
 
 int32_t temp_value = 0;
 float temp_value_c = 0.0;
 uint32_t temp_threshold_counter = 0;
 float TEMP_THRESHOLD = 28.0;
 
-float elapsed_ms = 0.0;
-
-uint32_t BLINK_BLUE_toggle = 0, ALTERNATE_LED_toggle = 0;
 
 
-void ALTERNATE_LED(void);
-void BLINK_BLUE(void);
+static void ALTERNATE_LED(void);
+static void BLINK_BLUE(void);
 uint32_t GETMSTICKS(void);
-void REST_NOW(void);
-void RGB_INIT(void);
-void RGB_SETLED(uint8_t LedMask);
+static void RGB_INIT(void);
+static void RGB_SETLED(uint8_t LedMask);
 
 
 
@@ -206,14 +217,11 @@ void SysTick_Handler(void) {					// Just increment SysTick counter
 	msTicks++;
 	BLINK_BLUE();
 	ALTERNATE_LED();
-//	MODE_TOGGLE = (GPIO_ReadValue(2) >> 10) & 0x1;
-//	EMERGENCY_OVER = (GPIO_ReadValue(1) >> 31) & 0x1;
 
 }
 
 __INLINE static void systick_delay (uint32_t delayTicks) {	// Creates a delay of the appropriate number of Systicks (happens every 1 ms)
 
-	uint32_t currentTicks;
 	currentTicks = msTicks;									// reads current tick counter
 
 	while ((msTicks - currentTicks) < delayTicks);			// Now loop until required number of ticks passes
@@ -222,7 +230,7 @@ __INLINE static void systick_delay (uint32_t delayTicks) {	// Creates a delay of
 
 
 
-void ALTERNATE_LED(void) {
+static void ALTERNATE_LED(void) {
 
 	if (ALTERNATE_LED_toggle == 1) {
 
@@ -238,7 +246,7 @@ void ALTERNATE_LED(void) {
 	}
 }
 
-void BLINK_BLUE(void) {
+static void BLINK_BLUE(void) {
 
 	if (BLINK_BLUE_toggle == 1) {
 
@@ -260,14 +268,14 @@ uint32_t GETMSTICKS(void) {
 
 }
 
-void RGB_INIT(void) {
+static void RGB_INIT(void) {
 
     GPIO_SetDir( 2, (1<<0), 1 );			// red
     GPIO_SetDir( 0, (1<<26), 1 );			// blue
 
 }
 
-void RGB_SETLED(uint8_t LedMask) {
+static void RGB_SETLED(uint8_t LedMask) {
 
 	if ((LedMask & RGB_RED) != 0) {
 		GPIO_SetValue(2, (1<<0));
@@ -308,6 +316,7 @@ int main(void) {
 	NVIC_EnableIRQ(EINT3_IRQn);								// Enable EINT3 interrupt
 
 	acc_init();												// Initializing external peripherals + clearing them
+	joystick_init();
 	led7seg_init();
 	led7seg_setChar(' ', FALSE);
 	light_enable();
@@ -315,6 +324,7 @@ int main(void) {
 	oled_init();
 	oled_clearScreen(OLED_COLOR_BLACK);
 	RGB_INIT();
+	rotary_init();
 	temp_init(&GETMSTICKS);
 
 	oled_putString(0, 0, (uint8_t*) oled_init1, OLED_COLOR_WHITE, OLED_COLOR_BLACK);
@@ -327,6 +337,164 @@ int main(void) {
 
 		MODE_TOGGLE = (GPIO_ReadValue(2) >> 10) & 0x1;
 		EMERGENCY_OVER = (GPIO_ReadValue(1) >> 31) & 0x1;
+		joyState = joystick_read();
+		rotaryState = rotary_read();
+
+
+
+//		***** TOOGLE_THRESHOLD function START *****
+
+		if (init_toggle == 1) {
+
+
+
+//			*** Joystick debouncing START ***
+
+			if ((joyState & JOYSTICK_CENTER) != 0) {
+				joystick_counter++;
+			}
+
+			else {
+				joystick_counter = 0;
+			}
+
+			if (joystick_counter == 1) {
+				joystick_counter2++;
+			}
+
+			joystick_toggle = joystick_counter2 % 2;
+
+//			*** Joystick debouncing END ***
+
+
+
+//			*** Rotary debouncing START ***
+
+			if (rotaryState != 0) {
+				rotary_value = rotaryState;
+			}
+
+//			*** Rotary debouncing END ***
+
+
+
+			if (joystick_toggle == 1) {
+
+				oled_clearScreen(OLED_COLOR_BLACK);
+				oled_putString(0, 0, (uint8_t*) oled_threshold, OLED_COLOR_WHITE, OLED_COLOR_BLACK);
+
+				while(1) {
+
+					joyState = joystick_read();
+					rotaryState = rotary_read();
+
+					sprintf(oled_threshold_acc, "Acc: %3.1f g", ACC_THRESHOLD);
+					oled_putString(0, 20, (uint8_t*) oled_threshold_acc, OLED_COLOR_WHITE, OLED_COLOR_BLACK);
+					sprintf(oled_threshold_temp, "Temp: %4.1f deg", TEMP_THRESHOLD);
+					oled_putString(0, 30, (uint8_t*) oled_threshold_temp, OLED_COLOR_WHITE, OLED_COLOR_BLACK);
+					sprintf(oled_threshold_light, "Light: %5lu lx", LIGHT_THRESHOLD);
+					oled_putString(0, 40, (uint8_t*) oled_threshold_light, OLED_COLOR_WHITE, OLED_COLOR_BLACK);
+
+
+
+//					*** Joystick debouncing START ***
+
+					if ((joyState & JOYSTICK_CENTER) != 0) {
+						joystick_counter++;
+					}
+
+					else {
+						joystick_counter = 0;
+					}
+
+					if (joystick_counter == 1) {
+						joystick_counter2++;
+					}
+
+					joystick_toggle = joystick_counter2 % 2;
+
+//					*** Joystick debouncing END ***
+
+
+
+//					*** Rotary debouncing START ***
+
+					if (rotaryState != 0) {
+						rotary_value = rotaryState;
+					}
+
+//					*** Rotary debouncing END ***
+
+
+
+					if ((joyState & JOYSTICK_UP) != 0) {
+
+						if (ACC_THRESHOLD < 1.9) {
+							ACC_THRESHOLD += 0.1;
+						}
+					}
+
+					if ((joyState & JOYSTICK_DOWN) != 0) {
+
+						if (ACC_THRESHOLD > 0.2) {
+							ACC_THRESHOLD -= 0.1;
+						}
+					}
+
+					if ((joyState & JOYSTICK_LEFT) != 0) {
+
+						if (LIGHT_THRESHOLD > 500) {
+							LIGHT_THRESHOLD -= 500;
+						}
+					}
+
+					if ((joyState & JOYSTICK_RIGHT) != 0) {
+
+						if (LIGHT_THRESHOLD < 16000) {
+							LIGHT_THRESHOLD += 500;
+						}
+					}
+
+					if (rotary_value == ROTARY_LEFT) {
+
+						if (rotary_check_left == 0) {
+
+							if (TEMP_THRESHOLD > 20) {
+								TEMP_THRESHOLD -= 0.5;
+								rotary_check_left = 1;
+							}
+						}
+					}
+
+					if (rotary_value == ROTARY_RIGHT) {
+
+						if (rotary_check_right == 0) {
+
+							if (TEMP_THRESHOLD < 40) {
+								TEMP_THRESHOLD += 0.5;
+								rotary_check_right = 1;
+							}
+						}
+					}
+
+					if (joystick_toggle == 0) {
+
+						joystick_counter = 0;
+						joystick_counter2 = 0;
+						oled_clearScreen(OLED_COLOR_BLACK);
+						oled_putString(0, 0, (uint8_t*) oled_init1, OLED_COLOR_WHITE, OLED_COLOR_BLACK);
+						oled_putString(0, 10, (uint8_t*) oled_init2, OLED_COLOR_WHITE, OLED_COLOR_BLACK);
+						oled_putString(0, 20, (uint8_t*) oled_init3, OLED_COLOR_WHITE, OLED_COLOR_BLACK);
+						break;
+
+					}
+				}
+			}
+		}
+
+//		***** TOOGLE_THRESHOLD function END *****
+
+
 
 		if (MODE_TOGGLE == 0) {						// Prevents COUNTDOWN from activating again if you press MODE_TOGGLE more than once
 
@@ -340,6 +508,7 @@ int main(void) {
 
 //			***** COUNTDOWN function START *****
 
+			joystick_toggle = 0;
 			oled_clearScreen(OLED_COLOR_BLACK);
 
 			oled_putString(0, 0, (uint8_t*) oled_toggle1, OLED_COLOR_WHITE, OLED_COLOR_BLACK);
@@ -370,15 +539,15 @@ int main(void) {
 			oled_putString(0, 0, (uint8_t*) oled_climb, OLED_COLOR_WHITE, OLED_COLOR_BLACK);
 			MODE_TOGGLE_counter++;
 			MODE_TOGGLE_counter2++;
+			init_toggle = 0;
 
 		}
 
 		if ((MODE_TOGGLE_counter > 1) && (MODE_TOGGLE_counter2 > 0)) {			// After transition, device is in CLIMB mode
 																				// Prevents going to CLIMB mode prematurely if you spam sw3 during COUNTDOWN
-
-//			sprintf(oled_climb, "CLIMB");
 			oled_putString(0, 0, (uint8_t*) oled_climb, OLED_COLOR_WHITE, OLED_COLOR_BLACK);
 
+			counter = 16;
 			acc_read(&acc_x, &acc_y, &acc_z);
 			acc_net_sq = pow(acc_x - acc_x_init, 2) + pow(acc_y - acc_y_init, 2) + pow(acc_z - acc_z_init, 2);
 			g_value = sqrt(acc_net_sq) / 64;
@@ -392,7 +561,6 @@ int main(void) {
 			oled_putString(0, 30, (uint8_t*) oled_temp, OLED_COLOR_WHITE, OLED_COLOR_BLACK);
 			sprintf(oled_light, "Light: %5lu lx", light_value);
 			oled_putString(0, 40, (uint8_t*) oled_light, OLED_COLOR_WHITE, OLED_COLOR_BLACK);
-
 
 
 
@@ -418,22 +586,16 @@ int main(void) {
 			}
 
 			else {
-
 				oled_putString(50, 0, (uint8_t*) oled_blank_half, OLED_COLOR_WHITE, OLED_COLOR_BLACK);
-
 			}
 
 //			***** AMBIENT_LIGHT_DETECTION function END *****
 
 
 
-
-
-
 //			***** REST_NOW function START *****
 
 			if (temp_value_c/10 > TEMP_THRESHOLD) {
-
 
 				if (temp_threshold_counter == 0) {			// Prevents REST_NOW from activating every time TEMP_THRESHOLD is crossed
 
@@ -449,22 +611,16 @@ int main(void) {
 			}
 
 			else {
-
 				temp_threshold_counter = 0;
-
 			}
 
 //			***** REST_NOW function END *****
 
 
 
-
-
-
 //			***** EMERGENCY_MODE function START *****
 
 			if (g_value > ACC_THRESHOLD) {
-
 
 				oled_putString(0, 0, (uint8_t*) oled_blank, OLED_COLOR_WHITE, OLED_COLOR_BLACK);
 				oled_putString(0, 40, (uint8_t*) oled_blank, OLED_COLOR_WHITE, OLED_COLOR_BLACK);
@@ -559,6 +715,8 @@ int main(void) {
 					}
 
 //					***** SAVED function + BLINK_BLUE function END *****
+
+
 
 				}
 			}
